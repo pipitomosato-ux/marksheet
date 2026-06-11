@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+<title>マークシート 回答・採点</title>
+</head>
+<body>
+<div class="container">
+  <h1>マークシート 回答・採点</h1>
+
+  <div class="tab-bar">
+    <button class="tab active" onclick="switchTab('setup')">設定</button>
+    <button class="tab" onclick="switchTab('answer')">回答</button>
+    <button class="tab" onclick="switchTab('key')">正解<span id="key-badge" class="key-badge" style="display:none">PDF読込済</span></button>
+    <button class="tab" onclick="switchTab('result')">結果</button>
+    <button class="tab" onclick="switchTab('history')">履歴</button>
+  </div>
+
+  <!-- 設定 -->
+  <div id="tab-setup" class="section visible">
+    <div class="setup-group">
+      <div class="setup-group-label">問題数</div>
+      <div class="number-row">
+        <input type="number" id="qcount" value="20" min="1" max="100">
+        <span>問</span>
+      </div>
+    </div>
+
+    <div class="setup-group">
+      <div class="setup-group-label">選択肢の数</div>
+      <div class="option-tiles" id="choice-tiles">
+        <label class="option-tile">
+          <input type="radio" name="choices" value="3" onchange="pickChoices(3)">
+          <span class="option-tile-inner">
+            <span class="check-icon"><svg viewBox="0 0 10 10" fill="none"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            3択
+          </span>
+        </label>
+        <label class="option-tile">
+          <input type="radio" name="choices" value="4" checked onchange="pickChoices(4)">
+          <span class="option-tile-inner">
+            <span class="check-icon"><svg viewBox="0 0 10 10" fill="none"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            4択
+          </span>
+        </label>
+        <label class="option-tile">
+          <input type="radio" name="choices" value="5" onchange="pickChoices(5)">
+          <span class="option-tile-inner">
+            <span class="check-icon"><svg viewBox="0 0 10 10" fill="none"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            5択
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="setup-group">
+      <div class="setup-group-label">選択肢の記号</div>
+      <div class="option-tiles" id="label-tiles">
+        <label class="option-tile">
+          <input type="radio" name="label" value="num" checked onchange="pickLabel('num')">
+          <span class="option-tile-inner">
+            <span class="check-icon"><svg viewBox="0 0 10 10" fill="none"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            1 &nbsp;2 &nbsp;3
+          </span>
+        </label>
+        <label class="option-tile">
+          <input type="radio" name="label" value="abc" onchange="pickLabel('abc')">
+          <span class="option-tile-inner">
+            <span class="check-icon"><svg viewBox="0 0 10 10" fill="none"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            A &nbsp;B &nbsp;C
+          </span>
+        </label>
+        <label class="option-tile">
+          <input type="radio" name="label" value="kana" onchange="pickLabel('kana')">
+          <span class="option-tile-inner">
+            <span class="check-icon"><svg viewBox="0 0 10 10" fill="none"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            ア &nbsp;イ &nbsp;ウ
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <button class="generate-btn" onclick="generateSheet()">シートを作成 →</button>
+  </div>
+
+  <!-- 回答 -->
+  <div id="tab-answer" class="section">
+    <div id="answer-sheet" class="sheet-grid"></div>
+    <div class="submit-row">
+      <button onclick="clearAnswers()">クリア</button>
+      <button class="btn-primary" onclick="grade()">採点する →</button>
+    </div>
+  </div>
+
+  <!-- 正解 -->
+  <div id="tab-key" class="section">
+    <div class="pdf-zone" id="pdf-drop"
+      onclick="document.getElementById('pdf-input').click()"
+      ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="9" y1="13" x2="15" y2="13"/>
+      </svg>
+      <p>PDFをドロップ、またはクリックして選択</p>
+      <p class="sub">「問1：2」「Q1: A」などの形式で正解が書かれたPDFを読み込みます</p>
+    </div>
+    <input type="file" id="pdf-input" accept=".pdf" style="display:none" onchange="handlePdfFile(event)">
+    <div id="pdf-status" class="status-bar"></div>
+    <p class="manual-label">または手動で正解を選択：</p>
+    <div id="answer-key" class="sheet-grid"></div>
+    <div class="submit-row">
+      <button onclick="clearKey()">クリア</button>
+      <button class="btn-primary" onclick="grade()">採点する →</button>
+    </div>
+  </div>
+
+  <!-- 結果 -->
+  <div id="tab-result" class="section">
+    <div id="result-content">
+      <p style="color:var(--text-secondary);font-size:14px;text-align:center;padding:2rem;">まだ採点されていません</p>
+    </div>
+  </div>
+
+  <!-- 履歴 -->
+  <div id="tab-history" class="section">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+      <p style="font-size:13px;color:var(--text-secondary);">採点した記録が残ります</p>
+      <button onclick="clearAllHistory()" style="font-size:13px;color:var(--text-danger);background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:var(--radius-sm);">すべて削除</button>
+    </div>
+    <div id="history-list"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  const pdfjsLib = window['pdfjs-dist/build/pdf'];
+  if (pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  let state = { qcount: 20, choices: 4, labelType: 'num', answers: {}, key: {} };
+
+  function getLabels(n) {
+    if (state.labelType === 'abc')  return ['A','B','C','D','E'].slice(0, n);
+    if (state.labelType === 'kana') return ['ア','イ','ウ','エ','オ'].slice(0, n);
+    return Array.from({ length: n }, (_, i) => i + 1);
+  }
+
+  function switchTab(name) {
+    const names = ['setup','answer','key','result','history'];
+    document.querySelectorAll('.tab').forEach((t, i) =>
+      t.classList.toggle('active', names[i] === name));
+    document.querySelectorAll('.section').forEach(s =>
+      s.classList.remove('visible'));
+    document.getElementById('tab-' + name).classList.add('visible');
+    if (name === 'history') renderHistory();
+  }
+
+  function pickChoices(n) { state.choices = n; }
+  function pickLabel(type) { state.labelType = type; }
+
+  function generateSheet() {
+    state.qcount = parseInt(document.getElementById('qcount').value) || 20;
+    state.answers = {};
+    state.key = {};
+    renderSheet('answer-sheet', state.answers, false);
+    renderSheet('answer-key', state.key, false);
+    document.getElementById('key-badge').style.display = 'none';
+    setStatus('', '');
+    switchTab('answer');
+  }
+
+  function renderSheet(containerId, store, showResult, correctStore) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const labels = getLabels(state.choices);
+    el.innerHTML = '';
+    const rows = Math.ceil(state.qcount / 3);
+    el.style.gridTemplateRows = `repeat(${rows}, auto)`;
+    for (let q = 1; q <= state.qcount; q++) {
+      const row = document.createElement('div');
+      row.className = 'q-row';
+      const num = document.createElement('div');
+      num.className = 'q-num';
+      num.textContent = q;
+      const marks = document.createElement('div');
+      marks.className = 'marks';
+      labels.forEach((lbl, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'mark';
+        btn.textContent = lbl;
+        if (store[q] === i) btn.classList.add('filled');
+        if (showResult && correctStore) {
+          if (store[q] === i && correctStore[q] === i) {
+            btn.classList.remove('filled'); btn.classList.add('correct');
+          } else if (store[q] === i && correctStore[q] !== i) {
+            btn.classList.remove('filled'); btn.classList.add('wrong');
+          }
+          if (correctStore[q] === i && store[q] !== i)
+            btn.classList.add('answer-show');
+        }
+        if (!showResult) btn.onclick = () => toggleMark(store, q, i, containerId, correctStore);
+        marks.appendChild(btn);
+      });
+      row.appendChild(num);
+      row.appendChild(marks);
+      el.appendChild(row);
+    }
+  }
+
+  function toggleMark(store, q, idx, containerId, correctStore) {
+    if (store[q] === idx) delete store[q]; else store[q] = idx;
+    renderSheet(containerId, store, false, correctStore);
+  }
+
+  function clearAnswers() {
+    state.answers = {};
+    renderSheet('answer-sheet', state.answers, false);
+  }
+
+  function clearKey() {
+    state.key = {};
+    renderSheet('answer-key', state.key, false);
+    document.getElementById('key-badge').style.display = 'none';
+    setStatus('', '');
+  }
+
+  function grade() {
+    if (Object.keys(state.key).length === 0) { switchTab('key'); return; }
+    let correct = 0, total = 0;
+    for (let q = 1; q <= state.qcount; q++) {
+      if (state.key[q] !== undefined) {
+        total++;
+        if (state.answers[q] === state.key[q]) correct++;
+      }
+    }
+    const pct = total ? Math.round(correct / total * 100) : 0;
+    saveHistory(correct, total, pct);
+    document.getElementById('result-content').innerHTML = `
+      <div class="score-card">
+        <div class="score-num">${correct} / ${total}</div>
+        <div class="score-sub">正解数 &nbsp;|&nbsp; 正答率 ${pct}%</div>
+      </div>
+      <div class="legend">
+        <span><span class="dot c"></span>正解</span>
+        <span><span class="dot w"></span>不正解</span>
+        <span style="font-size:12px;color:var(--text-tertiary);">（緑枠 = 正解の選択肢）</span>
+      </div>
+      <div id="result-detail" class="sheet-grid"></div>`;
+    renderSheet('result-detail', state.answers, true, state.key);
+    switchTab('result');
+  }
+
+  function setStatus(type, html) {
+    const el = document.getElementById('pdf-status');
+    el.className = 'status-bar' + (type ? ' ' + type : '');
+    el.innerHTML = html;
+  }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    document.getElementById('pdf-drop').classList.add('dragover');
+  }
+  function onDragLeave() {
+    document.getElementById('pdf-drop').classList.remove('dragover');
+  }
+  function onDrop(e) {
+    e.preventDefault(); onDragLeave();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') processPdf(file);
+    else setStatus('danger', '⚠ PDFファイルを選択してください');
+  }
+  function handlePdfFile(e) {
+    const file = e.target.files[0];
+    if (file) processPdf(file);
+  }
+
+  async function processPdf(file) {
+    setStatus('info', '<span class="spinner"></span>&nbsp;PDFを読み込んでいます...');
+    try {
+      const ab = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+      let fullText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map(it => it.str).join(' ') + '\n';
+      }
+
+      const direct = tryDirectParse(fullText);
+      if (Object.keys(direct).length > 0) {
+        autoDetectSettings(direct, fullText);
+        applyExtractedAnswers(direct);
+      } else {
+        setStatus('info', '<span class="spinner"></span>&nbsp;AIが正解を解析中...');
+        await extractAnswersWithAI(fullText);
+      }
+    } catch (err) {
+      setStatus('danger', '⚠ PDFの読み込みに失敗しました: ' + err.message);
+    }
+  }
+
+  function tryDirectParse(text) {
+    const result = {};
+    // 「問N ア/イ/ウ/エ」形式（IPA試験など）
+    const reKana = /問\s*(\d+)\s*([アイウエオ])/g;
+    let m;
+    while ((m = reKana.exec(text)) !== null) result[m[1]] = m[2];
+    if (Object.keys(result).length > 0) return result;
+
+    // 「問N A/B/C/D」形式
+    const reAlpha = /問\s*(\d+)\s*([A-Ea-e])\b/g;
+    while ((m = reAlpha.exec(text)) !== null) result[m[1]] = m[2].toUpperCase();
+    if (Object.keys(result).length > 0) return result;
+
+    // 「問N 1/2/3/4」形式
+    const reNum = /問\s*(\d+)\s*([1-5])(?!\d)/g;
+    while ((m = reNum.exec(text)) !== null) result[m[1]] = m[2];
+    return result;
+  }
+
+  function autoDetectSettings(parsed, text) {
+    const nums = Object.keys(parsed).map(Number);
+    if (nums.length === 0) return;
+
+    const maxQ = Math.max(...nums);
+    if (maxQ > state.qcount) {
+      state.qcount = maxQ;
+      document.getElementById('qcount').value = maxQ;
+    }
+
+    const vals = Object.values(parsed);
+    const hasKana = vals.some(v => 'アイウエオ'.includes(v));
+    const hasAlpha = vals.some(v => /^[A-E]$/.test(v));
+    const hasNum  = vals.some(v => /^[1-5]$/.test(v));
+
+    if (hasKana) {
+      state.labelType = 'kana';
+      document.querySelector('input[name="label"][value="kana"]').checked = true;
+      const kanaVals = [...new Set(vals.filter(v => 'アイウエオ'.includes(v)))];
+      state.choices = Math.max(state.choices, Math.max(...kanaVals.map(v => 'アイウエオ'.indexOf(v) + 1)));
+    } else if (hasAlpha) {
+      state.labelType = 'abc';
+      document.querySelector('input[name="label"][value="abc"]').checked = true;
+    } else if (hasNum) {
+      state.labelType = 'num';
+      document.querySelector('input[name="label"][value="num"]').checked = true;
+    }
+
+    const maxChoice = Math.max(state.choices, ...vals.map(v => {
+      const i = 'アイウエオABCDE12345'.indexOf(v);
+      return i >= 0 ? (i % 5) + 1 : 0;
+    }));
+    if (maxChoice >= 3 && maxChoice <= 5) {
+      state.choices = maxChoice;
+      const radio = document.querySelector(`input[name="choices"][value="${maxChoice}"]`);
+      if (radio) radio.checked = true;
+    }
+
+    renderSheet('answer-sheet', state.answers, false);
+    renderSheet('answer-key', state.key, false);
+  }
+
+  async function extractAnswersWithAI(text) {
+    const labels = getLabels(state.choices);
+    const prompt = `以下はPDFから抽出したテキストです。このテキストから各問題の正解を抽出してください。
+
+テキスト:
+${text.slice(0, 4000)}
+
+各問題の正解を以下のJSON形式で返してください。keyは問題番号（文字列）、valueは正解の選択肢（ア/イ/ウ/エ、A/B/C/D、1/2/3/4 など実際に使われている記号）：
+{"1":"ウ","2":"エ",...}
+
+見つからない問題は含めなくて構いません。JSONのみ返してください。`;
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      const data = await res.json();
+      const raw = data.content.map(c => c.text || '').join('');
+      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      autoDetectSettings(parsed, '');
+      applyExtractedAnswers(parsed);
+    } catch (err) {
+      setStatus('danger', '⚠ AI解析に失敗しました。手動で正解を入力してください。');
+    }
+  }
+
+  function applyExtractedAnswers(parsed) {
+    const labels = getLabels(state.choices);
+    let count = 0;
+    for (const [qStr, ans] of Object.entries(parsed)) {
+      const q = parseInt(qStr);
+      if (isNaN(q) || q < 1 || q > state.qcount) continue;
+      const idx = labels.findIndex(l => String(l) === String(ans).trim());
+      if (idx >= 0) { state.key[q] = idx; count++; }
+    }
+    renderSheet('answer-key', state.key, false);
+    if (count > 0) {
+      document.getElementById('key-badge').style.display = 'inline';
+      setStatus('success', `✓ ${count}問の正解を読み込みました。確認・修正できます。`);
+    } else {
+      setStatus('danger', '⚠ 正解を読み取れませんでした。手動で入力してください。');
+    }
+  }
+
+  const HISTORY_KEY = 'marksheet-history';
+  const HISTORY_MAX = 50;
+
+  function saveHistory(correct, total, pct) {
+    const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    list.unshift({
+      id: Date.now(),
+      date: new Date().toLocaleString('ja-JP'),
+      correct,
+      total,
+      pct
+    });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  }
+
+  function loadHistory() {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+  }
+
+  function deleteHistory(id) {
+    const list = loadHistory().filter(h => h.id !== id);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    renderHistory();
+  }
+
+  function clearAllHistory() {
+    if (!confirm('採点履歴をすべて削除しますか？')) return;
+    localStorage.removeItem(HISTORY_KEY);
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const el = document.getElementById('history-list');
+    const list = loadHistory();
+    if (list.length === 0) {
+      el.innerHTML = '<p class="history-empty">まだ採点履歴がありません</p>';
+      return;
+    }
+    el.innerHTML = list.map(h => `
+      <div class="history-card">
+        <div class="history-score">${h.correct}<span style="font-size:14px;color:var(--text-secondary);font-weight:400;"> / ${h.total}</span></div>
+        <div class="history-meta">
+          <div class="history-pct">正答率 ${h.pct}%</div>
+          <div class="history-date">${h.date}</div>
+        </div>
+        <button class="history-delete" onclick="deleteHistory(${h.id})" title="削除">×</button>
+      </div>
+    `).join('');
+  }
+
+  generateSheet();
+</script>
+</body>
+</html>
