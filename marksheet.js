@@ -1,610 +1,580 @@
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+const pdfjsLib = window['pdfjs-dist/build/pdf'];
+  if (pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-  :root {
-    --bg: #ffffff;
-    --bg-secondary: #f5f5f4;
-    --bg-info: #e6f1fb;
-    --bg-success: #eaf3de;
-    --bg-danger: #fcebeb;
-    --text: #1a1a1a;
-    --text-secondary: #6b6b6b;
-    --text-tertiary: #a0a0a0;
-    --text-info: #185fa5;
-    --text-success: #3b6d11;
-    --text-danger: #a32d2d;
-    --border: rgba(0,0,0,0.12);
-    --border-hover: rgba(0,0,0,0.28);
-    --blue: #178ADD;
-    --green: #1D9E75;
-    --red: #E24B4A;
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
+  let state = { qcount: 20, choices: 4, labelType: 'num', answers: {}, key: {} };
+
+  // 問題PDF関連
+  let qPdfDoc = null;
+  let viewerMode = 'scroll'; // 'scroll' | 'page'
+  let currentPage = 1;
+  let pdfLayout = 'lr';      // 'lr' | 'tb' | 'none'
+
+  function getLabels(n) {
+    if (state.labelType === 'abc')  return ['A','B','C','D','E'].slice(0, n);
+    if (state.labelType === 'kana') return ['ア','イ','ウ','エ','オ'].slice(0, n);
+    return Array.from({ length: n }, (_, i) => i + 1);
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #1e1e1e;
-      --bg-secondary: #2a2a2a;
-      --bg-info: #0c2440;
-      --bg-success: #0d2810;
-      --bg-danger: #2d0f0f;
-      --text: #f0f0f0;
-      --text-secondary: #a0a0a0;
-      --text-tertiary: #666;
-      --text-info: #85b7eb;
-      --text-success: #97c459;
-      --text-danger: #f09595;
-      --border: rgba(255,255,255,0.1);
-      --border-hover: rgba(255,255,255,0.25);
+  // ── タブ切り替え ──────────────────────────────
+  function switchTab(name) {
+    const names = ['setup','answer','key','result','history'];
+
+    // 両方のタブバーを同期
+    document.querySelectorAll('.tab').forEach(t => {
+      const idx = names.indexOf(name);
+      const allTabs = [...document.querySelectorAll('.tab')];
+      // data属性で管理するより位置で判断
+      t.classList.remove('active');
+    });
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      const barTabs = [...t.closest('.tab-bar').querySelectorAll('.tab')];
+      const pos = barTabs.indexOf(t);
+      if (names[pos] === name) t.classList.add('active');
+    });
+
+    // セクション切り替え
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('visible'));
+    const sec = document.getElementById('tab-' + name);
+    if (sec) sec.classList.add('visible');
+
+    // 回答・結果タブ + 問題PDF読込済 → 2ペイン表示
+    if ((name === 'answer' || name === 'result') && qPdfDoc) {
+      showDualPane(name);
+    } else {
+      hideDualPane();
+    }
+    if (name === 'answer') updateQPdfToggle();
+
+    if (name === 'history') renderHistory();
+  }
+
+  function showDualPane(pane = 'answer') {
+    document.getElementById('main-container').style.display = 'none';
+    document.getElementById('dual-pane').style.display = 'flex';
+    document.getElementById('dual-pane').style.flexDirection = 'column';
+    document.body.classList.add('dual-mode');
+    // key-badge同期
+    const b1 = document.getElementById('key-badge');
+    const b2 = document.getElementById('key-badge2');
+    if (b2) b2.style.display = b1.style.display;
+    // 右ペイン切り替え
+    document.getElementById('dual-answer-area').style.display = pane === 'answer' ? '' : 'none';
+    document.getElementById('dual-result-area').style.display = pane === 'result' ? '' : 'none';
+    if (pane === 'answer') renderDualSheet();
+    renderPdfViewer();
+    initResizer();
+    applyLayout(pdfLayout);
+    updateQPdfToggle();
+  }
+
+  function hideDualPane() {
+    document.getElementById('main-container').style.display = '';
+    document.getElementById('dual-pane').style.display = 'none';
+    document.body.classList.remove('dual-mode');
+  }
+
+  // ── 設定 ──────────────────────────────────────
+  function pickChoices(n) { state.choices = n; }
+  function pickLabel(type) { state.labelType = type; }
+
+  function generateSheet() {
+    state.qcount = parseInt(document.getElementById('qcount').value) || 20;
+    state.answers = {};
+    state.key = {};
+    renderSheet('answer-sheet', state.answers, false);
+    renderSheet('answer-key', state.key, false);
+    document.getElementById('key-badge').style.display = 'none';
+    setStatus('', '');
+    switchTab('answer');
+  }
+
+  // ── マークシート描画 ──────────────────────────
+  function renderSheet(containerId, store, showResult, correctStore) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const labels = getLabels(state.choices);
+    el.innerHTML = '';
+    const rows = Math.ceil(state.qcount / 3);
+    el.style.gridTemplateRows = `repeat(${rows}, auto)`;
+    for (let q = 1; q <= state.qcount; q++) {
+      const row = document.createElement('div');
+      row.className = 'q-row';
+      const num = document.createElement('div');
+      num.className = 'q-num';
+      num.textContent = q;
+      const marks = document.createElement('div');
+      marks.className = 'marks';
+      labels.forEach((lbl, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'mark';
+        btn.textContent = lbl;
+        if (store[q] === i) btn.classList.add('filled');
+        if (showResult && correctStore) {
+          if (store[q] === i && correctStore[q] === i) {
+            btn.classList.remove('filled'); btn.classList.add('correct');
+          } else if (store[q] === i && correctStore[q] !== i) {
+            btn.classList.remove('filled'); btn.classList.add('wrong');
+          }
+          if (correctStore[q] === i && store[q] !== i)
+            btn.classList.add('answer-show');
+        }
+        if (!showResult) btn.onclick = () => toggleMark(store, q, i, containerId, correctStore);
+        marks.appendChild(btn);
+      });
+      row.appendChild(num);
+      row.appendChild(marks);
+      el.appendChild(row);
     }
   }
 
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: var(--bg-secondary);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 2rem 1rem;
+  function renderDualSheet() {
+    renderSheet('answer-sheet-dual', state.answers, false);
   }
 
-  .container {
-    max-width: 780px;
-    margin: 0 auto;
-    background: var(--bg);
-    border-radius: var(--radius-lg);
-    border: 0.5px solid var(--border);
-    padding: 2rem;
+  function toggleMark(store, q, idx, containerId, correctStore) {
+    if (store[q] === idx) delete store[q]; else store[q] = idx;
+    renderSheet(containerId, store, false, correctStore);
+    // 2ペインのシートも同期
+    if (containerId === 'answer-sheet') renderDualSheet();
+    if (containerId === 'answer-sheet-dual') renderSheet('answer-sheet', store, false, correctStore);
   }
 
-  h1 {
-    font-size: 20px;
-    font-weight: 500;
-    margin-bottom: 1.5rem;
-    color: var(--text);
+  function clearAnswers() {
+    state.answers = {};
+    renderSheet('answer-sheet', state.answers, false);
+    renderDualSheet();
   }
 
-  /* Tab bar */
-  .tab-bar {
-    display: flex;
-    gap: 4px;
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
-    padding: 4px;
-    margin-bottom: 1.75rem;
-  }
-  .tab {
-    flex: 1;
-    padding: 8px 0;
-    text-align: center;
-    font-size: 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    transition: all 0.15s;
-    font-family: inherit;
-  }
-  .tab.active {
-    background: var(--bg);
-    color: var(--text);
-    font-weight: 500;
-    border: 0.5px solid var(--border);
+  function clearKey() {
+    state.key = {};
+    renderSheet('answer-key', state.key, false);
+    document.getElementById('key-badge').style.display = 'none';
+    setStatus('', '');
   }
 
-  /* Sections */
-  .section { display: none; }
-  .section.visible { display: block; }
-
-  /* Setup */
-  .setup-group {
-    margin-bottom: 1.5rem;
-  }
-  .setup-group-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 10px;
-  }
-
-  /* Number input */
-  .number-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .number-row input[type="number"] {
-    width: 80px;
-    padding: 8px 12px;
-    font-size: 15px;
-    font-family: inherit;
-    border: 0.5px solid var(--border-hover);
-    border-radius: var(--radius-sm);
-    background: var(--bg);
-    color: var(--text);
-    outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
-  }
-  .number-row input[type="number"]:focus {
-    border-color: var(--blue);
-    box-shadow: 0 0 0 3px rgba(23,138,221,0.15);
-  }
-  .number-row span {
-    font-size: 14px;
-    color: var(--text-secondary);
+  function grade() {
+    if (Object.keys(state.key).length === 0) { switchTab('key'); return; }
+    let correct = 0, total = 0;
+    for (let q = 1; q <= state.qcount; q++) {
+      if (state.key[q] !== undefined) {
+        total++;
+        if (state.answers[q] === state.key[q]) correct++;
+      }
+    }
+    const pct = total ? Math.round(correct / total * 100) : 0;
+    saveHistory(correct, total, pct);
+    document.getElementById('result-content').innerHTML = `
+      <div class="score-card">
+        <div class="score-num">${correct} / ${total}</div>
+        <div class="score-sub">正解数 &nbsp;|&nbsp; 正答率 ${pct}%</div>
+      </div>
+      <div class="legend">
+        <span><span class="dot c"></span>正解</span>
+        <span><span class="dot w"></span>不正解</span>
+        <span style="font-size:12px;color:var(--text-tertiary);">（緑枠 = 正解の選択肢）</span>
+      </div>
+      <div id="result-detail" class="sheet-grid"></div>`;
+    renderSheet('result-detail', state.answers, true, state.key);
+    // 2ペイン用結果も同期
+    const dualResult = document.getElementById('result-content-dual');
+    if (dualResult) {
+      dualResult.innerHTML = `
+        <div class="score-card">
+          <div class="score-num">${correct} / ${total}</div>
+          <div class="score-sub">正解数 &nbsp;|&nbsp; 正答率 ${pct}%</div>
+        </div>
+        <div class="legend">
+          <span><span class="dot c"></span>正解</span>
+          <span><span class="dot w"></span>不正解</span>
+          <span style="font-size:12px;color:var(--text-tertiary);">（緑枠 = 正解の選択肢）</span>
+        </div>
+        <div id="result-detail-dual" class="sheet-grid"></div>`;
+      renderSheet('result-detail-dual', state.answers, true, state.key);
+    }
+    switchTab('result');
   }
 
-  /* Radio-style option tiles */
-  .option-tiles {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
+  // ── 問題PDFの読み込み ─────────────────────────
+  function onQDragOver(e) {
+    e.preventDefault();
+    document.getElementById('q-pdf-drop').classList.add('dragover');
   }
-  .option-tile {
-    position: relative;
-    cursor: pointer;
+  function onQDragLeave() {
+    document.getElementById('q-pdf-drop').classList.remove('dragover');
   }
-  .option-tile input[type="radio"] {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
+  function onQDrop(e) {
+    e.preventDefault(); onQDragLeave();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') loadQPdf(file);
   }
-  .option-tile-inner {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 9px 14px;
-    border-radius: var(--radius-sm);
-    border: 1.5px solid var(--border);
-    background: var(--bg);
-    font-size: 14px;
-    color: var(--text-secondary);
-    transition: all 0.15s;
-    user-select: none;
-  }
-  .option-tile-inner .check-icon {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 1.5px solid var(--border-hover);
-    background: var(--bg-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-    flex-shrink: 0;
-  }
-  .option-tile-inner .check-icon svg {
-    display: none;
-    width: 10px;
-    height: 10px;
-  }
-  .option-tile:hover .option-tile-inner {
-    border-color: var(--blue);
-    color: var(--text);
-  }
-  .option-tile input:checked + .option-tile-inner {
-    border-color: var(--blue);
-    background: var(--bg-info);
-    color: var(--text-info);
-    font-weight: 500;
-    box-shadow: 0 0 0 3px rgba(23,138,221,0.12);
-  }
-  .option-tile input:checked + .option-tile-inner .check-icon {
-    background: var(--blue);
-    border-color: var(--blue);
-  }
-  .option-tile input:checked + .option-tile-inner .check-icon svg {
-    display: block;
+  function handleQPdfFile(e) {
+    const file = e.target.files[0];
+    if (file) loadQPdf(file);
   }
 
-  .generate-btn {
-    margin-top: 1.5rem;
-    width: 100%;
-    padding: 11px;
-    font-size: 15px;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    border: 0.5px solid var(--border-hover);
-    background: var(--bg);
-    color: var(--text);
-    transition: background 0.15s;
-  }
-  .generate-btn:hover { background: var(--bg-secondary); }
-
-  /* Sheet grid — 縦に流れて列が埋まったら右の列へ */
-  .sheet-grid {
-    display: grid;
-    grid-template-rows: repeat(20, auto);
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    gap: 8px;
-  }
-  .q-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--bg);
-    border: 0.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 8px 12px;
-  }
-  .q-num {
-    font-size: 13px;
-    color: var(--text-tertiary);
-    min-width: 26px;
-    font-variant-numeric: tabular-nums;
-  }
-  .marks { display: flex; gap: 4px; }
-
-  .mark {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    border: 1px solid var(--border-hover);
-    background: transparent;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    color: var(--text-secondary);
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
-    font-family: inherit;
-  }
-  .mark:hover {
-    border-color: var(--blue);
-    color: var(--blue);
-  }
-  .mark.filled {
-    background: var(--blue);
-    border-color: var(--blue);
-    color: #fff;
-  }
-  .mark.correct {
-    background: var(--green);
-    border-color: var(--green);
-    color: #fff;
-  }
-  .mark.wrong {
-    background: var(--red);
-    border-color: var(--red);
-    color: #fff;
-  }
-  .mark.answer-show {
-    outline: 2px solid var(--green);
-    outline-offset: 2px;
+  async function loadQPdf(file) {
+    const label = document.getElementById('q-pdf-label');
+    label.textContent = '読み込み中...';
+    try {
+      const ab = await file.arrayBuffer();
+      qPdfDoc = await pdfjsLib.getDocument({ data: ab }).promise;
+      currentPage = 1;
+      label.textContent = `✓ ${file.name}（${qPdfDoc.numPages}ページ）`;
+      document.getElementById('q-pdf-drop').style.borderColor = 'var(--green)';
+    } catch (err) {
+      label.textContent = '⚠ 読み込みに失敗しました';
+    }
   }
 
-  /* Submit row */
-  .submit-row { display: flex; gap: 8px; margin-top: 1.5rem; }
-  .submit-row button {
-    flex: 1;
-    padding: 10px;
-    font-size: 14px;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    border: 0.5px solid var(--border-hover);
-    background: var(--bg);
-    color: var(--text);
-    transition: background 0.15s;
-  }
-  .submit-row button:hover { background: var(--bg-secondary); }
-  .btn-primary {
-    background: var(--blue) !important;
-    border-color: var(--blue) !important;
-    color: #fff !important;
-  }
-  .btn-primary:hover { opacity: 0.9; }
+  // ── PDFビューアー ─────────────────────────────
+  async function renderPdfViewer() {
+    if (!qPdfDoc) return;
+    const container = document.getElementById('pdf-canvas-container');
+    container.innerHTML = '';
 
-  /* PDF drop zone */
-  .pdf-zone {
-    border: 1.5px dashed var(--border-hover);
-    border-radius: var(--radius-md);
-    padding: 2rem;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.15s;
-    margin-bottom: 1rem;
-  }
-  .pdf-zone:hover { border-color: var(--blue); background: var(--bg-secondary); }
-  .pdf-zone.dragover { border-color: var(--blue); background: var(--bg-info); }
-  .pdf-zone svg { display: block; margin: 0 auto 10px; color: var(--text-tertiary); }
-  .pdf-zone p { font-size: 14px; color: var(--text-secondary); }
-  .pdf-zone .sub { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
-
-  /* Status bar */
-  .status-bar {
-    display: none;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-    margin-bottom: 1rem;
-  }
-  .status-bar.info    { display: flex; background: var(--bg-info);    color: var(--text-info);    }
-  .status-bar.success { display: flex; background: var(--bg-success); color: var(--text-success); }
-  .status-bar.danger  { display: flex; background: var(--bg-danger);  color: var(--text-danger);  }
-
-  /* Result */
-  .score-card {
-    text-align: center;
-    background: var(--bg-secondary);
-    border-radius: var(--radius-md);
-    padding: 2rem;
-    margin-bottom: 1.5rem;
-  }
-  .score-num { font-size: 48px; font-weight: 500; color: var(--blue); }
-  .score-sub { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
-
-  .legend {
-    display: flex;
-    gap: 16px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-bottom: 1rem;
-  }
-  .legend span { display: flex; align-items: center; gap: 6px; }
-  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
-  .dot.c { background: var(--green); }
-  .dot.w { background: var(--red); }
-
-  .key-badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background: var(--bg-success);
-    color: var(--text-success);
-    margin-left: 6px;
+    if (viewerMode === 'scroll') {
+      // 全ページを縦に並べる
+      for (let i = 1; i <= qPdfDoc.numPages; i++) {
+        const canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+        await renderPageToCanvas(i, canvas);
+      }
+      document.getElementById('page-nav').style.display = 'none';
+    } else {
+      // 1ページだけ表示
+      const canvas = document.createElement('canvas');
+      container.appendChild(canvas);
+      await renderPageToCanvas(currentPage, canvas);
+      updatePageIndicator();
+      document.getElementById('page-nav').style.display = 'flex';
+    }
   }
 
-  .spinner {
-    display: inline-block;
-    width: 14px; height: 14px;
-    border: 2px solid currentColor;
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    vertical-align: -2px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .manual-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-bottom: 1rem;
+  async function renderPageToCanvas(pageNum, canvas) {
+    const page = await qPdfDoc.getPage(pageNum);
+    const pane = document.getElementById('pane-pdf');
+    const paneW = pane.clientWidth - 32; // padding考慮
+    const viewport = page.getViewport({ scale: 1 });
+    const scale = Math.min(paneW / viewport.width, 2.0);
+    const scaledViewport = page.getViewport({ scale });
+    canvas.width = scaledViewport.width;
+    canvas.height = scaledViewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: scaledViewport }).promise;
   }
 
-  /* 履歴 */
-  .history-card {
-    background: var(--bg);
-    border: 0.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 12px 16px;
-    margin-bottom: 8px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-  .history-score {
-    font-size: 22px;
-    font-weight: 500;
-    color: var(--blue);
-    min-width: 60px;
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-  }
-  .history-meta {
-    flex: 1;
-    min-width: 0;
-  }
-  .history-name {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-    border-radius: 4px;
-    padding: 1px 4px;
-    margin: -1px -4px;
-    display: inline-block;
-    max-width: 100%;
-    transition: background 0.12s;
-  }
-  .history-name:hover { background: var(--bg-secondary); }
-  .history-name::after {
-    content: ' ✎';
-    font-size: 11px;
-    color: var(--text-tertiary);
-    opacity: 0;
-    transition: opacity 0.12s;
-  }
-  .history-name:hover::after { opacity: 1; }
-  .history-name-input {
-    font-size: 14px;
-    font-weight: 500;
-    font-family: inherit;
-    color: var(--text);
-    background: var(--bg-secondary);
-    border: 1px solid var(--blue);
-    border-radius: 4px;
-    padding: 1px 6px;
-    outline: none;
-    width: 100%;
-    box-shadow: 0 0 0 2px rgba(23,138,221,0.15);
-  }
-  .history-sub {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-top: 2px;
-  }
-  .history-delete {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--text-tertiary);
-    font-size: 18px;
-    padding: 4px 6px;
-    border-radius: var(--radius-sm);
-    line-height: 1;
-    flex-shrink: 0;
-    transition: color 0.12s, background 0.12s;
-  }
-  .history-delete:hover { color: var(--red); background: var(--bg-danger); }
-  .history-empty {
-    text-align: center;
-    padding: 2rem;
-    font-size: 14px;
-    color: var(--text-secondary);
+  function setViewerMode(mode) {
+    viewerMode = mode;
+    document.getElementById('btn-scroll').classList.toggle('active', mode === 'scroll');
+    document.getElementById('btn-page').classList.toggle('active', mode === 'page');
+    renderPdfViewer();
   }
 
-  /* ── 2ペインレイアウト ── */
-  body.dual-mode {
-    padding: 0;
-    background: var(--bg-secondary);
-  }
-  .dual-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 16px;
-    background: var(--bg);
-    border-bottom: 0.5px solid var(--border);
-    flex-shrink: 0;
-  }
-  .dual-body {
-    display: flex;
-    height: calc(100vh - 52px);
-    overflow: hidden;
-  }
-  .dual-body.tb {
-    flex-direction: column;
-  }
-  .pane {
-    overflow: auto;
-    min-width: 0;
-    min-height: 0;
-  }
-  .pane-pdf {
-    background: #555;
-    flex: 1;
-  }
-  .pane-sheet {
-    background: var(--bg);
-    flex: 1;
-    padding: 1.25rem;
-  }
-  .resizer {
-    flex-shrink: 0;
-    background: var(--border);
-    transition: background 0.15s;
-  }
-  .resizer {
-    width: 4px;
-    cursor: col-resize;
+  function changePage(delta) {
+    if (!qPdfDoc) return;
+    currentPage = Math.max(1, Math.min(qPdfDoc.numPages, currentPage + delta));
+    renderPdfViewer();
   }
 
-  .resizer:hover, .resizer.dragging {
-    background: var(--blue);
+  function updatePageIndicator() {
+    if (!qPdfDoc) return;
+    document.getElementById('page-indicator').textContent = `${currentPage} / ${qPdfDoc.numPages}`;
   }
 
-  /* PDF canvas */
-  #pdf-canvas-container {
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-  }
-  #pdf-canvas-container canvas {
-    max-width: 100%;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
-    border-radius: 2px;
+  // ── レイアウト・PDF閉じる ─────────────────────
+  function setLayout(layout) {
+    pdfLayout = layout;
+    renderPdfViewer();
   }
 
-  /* レイアウト・モードボタン */
-  .layout-btns {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-  .layout-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: var(--radius-sm);
-    border: 0.5px solid var(--border-hover);
-    background: var(--bg);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.12s;
-  }
-  .layout-btn.active {
-    background: var(--bg-info);
-    border-color: var(--blue);
-    color: var(--blue);
-  }
-  .viewer-mode-btns {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-  .mode-btn {
-    padding: 4px 10px;
-    font-size: 13px;
-    font-family: inherit;
-    border-radius: var(--radius-sm);
-    border: 0.5px solid var(--border-hover);
-    background: var(--bg);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.12s;
-  }
-  .mode-btn.active {
-    background: var(--bg-info);
-    border-color: var(--blue);
-    color: var(--blue);
-    font-weight: 500;
-  }
-  .page-nav-btn {
-    width: 26px;
-    height: 26px;
-    border-radius: var(--radius-sm);
-    border: 0.5px solid var(--border-hover);
-    background: var(--bg);
-    color: var(--text-secondary);
-    font-size: 16px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.12s;
-    font-family: inherit;
-  }
-  .page-nav-btn:hover {
-    border-color: var(--blue);
-    color: var(--blue);
+  function applyLayout(layout) {
+    // 左右のみ対応
   }
 
-  /* 設定タブの小さいPDFドロップゾーン */
-  .pdf-zone.small {
-    padding: 12px 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    text-align: left;
+  // PDFペインだけ非表示（シートはそのまま）
+  function closeQPdf() {
+    hideDualPane();
+    // 回答タブのまま通常レイアウトで表示
+    document.getElementById('tab-answer').classList.add('visible');
+    updateQPdfToggle();
   }
-  .pdf-zone.small svg { flex-shrink: 0; }
-  .pdf-zone.small span { font-size: 13px; }
+
+  // PDFペインを再表示
+  function reopenQPdf() {
+    if (!qPdfDoc) return;
+    showDualPane();
+    updateQPdfToggle();
+  }
+
+  // 回答タブのPDF追加/解除ボタンの表示を更新
+  function updateQPdfToggle() {
+    const btn = document.getElementById('qpdf-toggle-btn');
+    if (!btn) return;
+    const isDual = document.getElementById('dual-pane').style.display !== 'none';
+    if (qPdfDoc) {
+      btn.style.display = 'inline-flex';
+      btn.textContent = isDual ? '問題PDFを隠す' : '問題PDFを表示';
+      btn.onclick = isDual ? closeQPdf : reopenQPdf;
+    } else {
+      btn.style.display = 'none';
+    }
+  }
+
+  // ── リサイザー（ドラッグで仕切り移動） ────────
+  function initResizer() {
+    const resizer = document.getElementById('resizer');
+    const body = document.getElementById('dual-body');
+    const pdfPane = document.getElementById('pane-pdf');
+    const sheetPane = document.getElementById('pane-sheet');
+    let dragging = false, startPos = 0, startSize = 0;
+
+    resizer.onmousedown = (e) => {
+      dragging = true;
+      resizer.classList.add('dragging');
+      const isLR = !body.classList.contains('tb');
+      startPos = isLR ? e.clientX : e.clientY;
+      startSize = isLR ? pdfPane.offsetWidth : pdfPane.offsetHeight;
+      e.preventDefault();
+    };
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const isLR = !body.classList.contains('tb');
+      const delta = isLR ? e.clientX - startPos : e.clientY - startPos;
+      const newSize = Math.max(200, startSize + delta);
+      if (isLR) {
+        pdfPane.style.flex = 'none';
+        pdfPane.style.width = newSize + 'px';
+      } else {
+        pdfPane.style.flex = 'none';
+        pdfPane.style.height = newSize + 'px';
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        resizer.classList.remove('dragging');
+        renderPdfViewer(); // サイズ変更後に再描画
+      }
+    });
+  }
+
+  // ── 正解PDF読み込み ───────────────────────────
+  function setStatus(type, html) {
+    const el = document.getElementById('pdf-status');
+    el.className = 'status-bar' + (type ? ' ' + type : '');
+    el.innerHTML = html;
+  }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    document.getElementById('pdf-drop').classList.add('dragover');
+  }
+  function onDragLeave() {
+    document.getElementById('pdf-drop').classList.remove('dragover');
+  }
+  function onDrop(e) {
+    e.preventDefault(); onDragLeave();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') processPdf(file);
+    else setStatus('danger', '⚠ PDFファイルを選択してください');
+  }
+  function handlePdfFile(e) {
+    const file = e.target.files[0];
+    if (file) processPdf(file);
+  }
+
+  async function processPdf(file) {
+    setStatus('info', '<span class="spinner"></span>&nbsp;PDFを読み込んでいます...');
+    try {
+      const ab = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+      let fullText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map(it => it.str).join(' ') + '\n';
+      }
+      const direct = tryDirectParse(fullText);
+      if (Object.keys(direct).length > 0) {
+        autoDetectSettings(direct, fullText);
+        applyExtractedAnswers(direct);
+      } else {
+        setStatus('info', '<span class="spinner"></span>&nbsp;AIが正解を解析中...');
+        await extractAnswersWithAI(fullText);
+      }
+    } catch (err) {
+      setStatus('danger', '⚠ PDFの読み込みに失敗しました: ' + err.message);
+    }
+  }
+
+  function tryDirectParse(text) {
+    const result = {};
+    const reKana = /問\s*(\d+)\s*([アイウエオ])/g;
+    let m;
+    while ((m = reKana.exec(text)) !== null) result[m[1]] = m[2];
+    if (Object.keys(result).length > 0) return result;
+    const reAlpha = /問\s*(\d+)\s*([A-Ea-e])\b/g;
+    while ((m = reAlpha.exec(text)) !== null) result[m[1]] = m[2].toUpperCase();
+    if (Object.keys(result).length > 0) return result;
+    const reNum = /問\s*(\d+)\s*([1-5])(?!\d)/g;
+    while ((m = reNum.exec(text)) !== null) result[m[1]] = m[2];
+    return result;
+  }
+
+  function autoDetectSettings(parsed, text) {
+    const nums = Object.keys(parsed).map(Number);
+    if (nums.length === 0) return;
+    const maxQ = Math.max(...nums);
+    if (maxQ > state.qcount) {
+      state.qcount = maxQ;
+      document.getElementById('qcount').value = maxQ;
+    }
+    const vals = Object.values(parsed);
+    const hasKana = vals.some(v => 'アイウエオ'.includes(v));
+    const hasAlpha = vals.some(v => /^[A-E]$/.test(v));
+    const hasNum  = vals.some(v => /^[1-5]$/.test(v));
+    if (hasKana) {
+      state.labelType = 'kana';
+      document.querySelector('input[name="label"][value="kana"]').checked = true;
+      const kanaVals = [...new Set(vals.filter(v => 'アイウエオ'.includes(v)))];
+      state.choices = Math.max(state.choices, Math.max(...kanaVals.map(v => 'アイウエオ'.indexOf(v) + 1)));
+    } else if (hasAlpha) {
+      state.labelType = 'abc';
+      document.querySelector('input[name="label"][value="abc"]').checked = true;
+    } else if (hasNum) {
+      state.labelType = 'num';
+      document.querySelector('input[name="label"][value="num"]').checked = true;
+    }
+    const maxChoice = Math.max(state.choices, ...vals.map(v => {
+      const i = 'アイウエオABCDE12345'.indexOf(v);
+      return i >= 0 ? (i % 5) + 1 : 0;
+    }));
+    if (maxChoice >= 3 && maxChoice <= 5) {
+      state.choices = maxChoice;
+      const radio = document.querySelector(`input[name="choices"][value="${maxChoice}"]`);
+      if (radio) radio.checked = true;
+    }
+    renderSheet('answer-sheet', state.answers, false);
+    renderSheet('answer-key', state.key, false);
+  }
+
+  async function extractAnswersWithAI(text) {
+    const prompt = `以下はPDFから抽出したテキストです。各問題の正解を抽出してください。
+
+テキスト:
+${text.slice(0, 4000)}
+
+各問題の正解をJSON形式で返してください。keyは問題番号（文字列）、valueは正解の選択肢：
+{"1":"ウ","2":"エ",...}
+
+JSONのみ返してください。`;
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      const data = await res.json();
+      const raw = data.content.map(c => c.text || '').join('');
+      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      autoDetectSettings(parsed, '');
+      applyExtractedAnswers(parsed);
+    } catch (err) {
+      setStatus('danger', '⚠ AI解析に失敗しました。手動で正解を入力してください。');
+    }
+  }
+
+  function applyExtractedAnswers(parsed) {
+    const labels = getLabels(state.choices);
+    let count = 0;
+    for (const [qStr, ans] of Object.entries(parsed)) {
+      const q = parseInt(qStr);
+      if (isNaN(q) || q < 1 || q > state.qcount) continue;
+      const idx = labels.findIndex(l => String(l) === String(ans).trim());
+      if (idx >= 0) { state.key[q] = idx; count++; }
+    }
+    renderSheet('answer-key', state.key, false);
+    if (count > 0) {
+      document.getElementById('key-badge').style.display = 'inline';
+      setStatus('success', `✓ ${count}問の正解を読み込みました。確認・修正できます。`);
+    } else {
+      setStatus('danger', '⚠ 正解を読み取れませんでした。手動で入力してください。');
+    }
+  }
+
+  // ── 履歴 ──────────────────────────────────────
+  const HISTORY_KEY = 'marksheet-history';
+  const HISTORY_MAX = 50;
+
+  function saveHistory(correct, total, pct) {
+    const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    list.unshift({ id: Date.now(), date: new Date().toLocaleString('ja-JP'), correct, total, pct });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  }
+
+  function loadHistory() {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+  }
+
+  function deleteHistory(id) {
+    const list = loadHistory().filter(h => h.id !== id);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    renderHistory();
+  }
+
+  function clearAllHistory() {
+    if (!confirm('採点履歴をすべて削除しますか？')) return;
+    localStorage.removeItem(HISTORY_KEY);
+    renderHistory();
+  }
+
+  function renameHistory(id) {
+    const list = loadHistory();
+    const h = list.find(x => x.id === id);
+    if (!h) return;
+    const card = document.querySelector(`[data-id="${id}"]`);
+    const nameEl = card.querySelector('.history-name');
+    const currentName = h.name || '';
+    nameEl.outerHTML = `<input class="history-name-input" data-edit="${id}" value="${currentName}" placeholder="名前を入力…" maxlength="40">`;
+    const input = card.querySelector('.history-name-input');
+    input.focus();
+    input.select();
+    const commit = () => {
+      const newName = input.value.trim();
+      const updated = loadHistory().map(x => x.id === id ? { ...x, name: newName } : x);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+      renderHistory();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { renderHistory(); }
+    });
+  }
+
+  function renderHistory() {
+    const el = document.getElementById('history-list');
+    const list = loadHistory();
+    if (list.length === 0) {
+      el.innerHTML = '<p class="history-empty">まだ採点履歴がありません</p>';
+      return;
+    }
+    el.innerHTML = list.map(h => `
+      <div class="history-card" data-id="${h.id}">
+        <div class="history-score">${h.correct}<span style="font-size:14px;color:var(--text-secondary);font-weight:400;"> / ${h.total}</span></div>
+        <div class="history-meta">
+          <span class="history-name" onclick="renameHistory(${h.id})">${h.name || '名前なし'}</span>
+          <div class="history-sub">正答率 ${h.pct}% &nbsp;·&nbsp; ${h.date}</div>
+        </div>
+        <button class="history-delete" onclick="deleteHistory(${h.id})" title="削除">×</button>
+      </div>
+    `).join('');
+  }
+
+  generateSheet();
