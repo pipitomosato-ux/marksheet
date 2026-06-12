@@ -7,7 +7,9 @@
 <title>マークシート 回答・採点</title>
 </head>
 <body>
-<div class="container">
+
+<!-- 通常レイアウト（PDF未読込 or 回答タブ以外） -->
+<div class="container" id="main-container">
   <h1>マークシート 回答・採点</h1>
 
   <div class="tab-bar">
@@ -82,13 +84,28 @@
       </div>
     </div>
 
+    <div class="setup-group">
+      <div class="setup-group-label">問題PDF（任意）</div>
+      <div class="pdf-zone small" id="q-pdf-drop"
+        onclick="document.getElementById('q-pdf-input').click()"
+        ondragover="onQDragOver(event)" ondragleave="onQDragLeave(event)" ondrop="onQDrop(event)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <span id="q-pdf-label">問題PDFをドロップまたはクリック</span>
+      </div>
+      <input type="file" id="q-pdf-input" accept=".pdf" style="display:none" onchange="handleQPdfFile(event)">
+    </div>
+
     <button class="generate-btn" onclick="generateSheet()">シートを作成 →</button>
   </div>
 
-  <!-- 回答 -->
+  <!-- 回答（PDF未読込時） -->
   <div id="tab-answer" class="section">
     <div id="answer-sheet" class="sheet-grid"></div>
     <div class="submit-row">
+      <button id="qpdf-toggle-btn" style="display:none;align-items:center;gap:6px;"></button>
       <button onclick="clearAnswers()">クリア</button>
       <button class="btn-primary" onclick="grade()">採点する →</button>
     </div>
@@ -131,6 +148,56 @@
       <button onclick="clearAllHistory()" style="font-size:13px;color:var(--text-danger);background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:var(--radius-sm);">すべて削除</button>
     </div>
     <div id="history-list"></div>
+  </div>
+</div>
+
+<!-- 2ペインレイアウト（問題PDF読込済 + 回答タブ） -->
+<div id="dual-pane" style="display:none;">
+  <div class="dual-header">
+    <div class="tab-bar" style="flex:1;margin-bottom:0;">
+      <button class="tab" onclick="switchTab('setup')">設定</button>
+      <button class="tab active" onclick="switchTab('answer')">回答</button>
+      <button class="tab" onclick="switchTab('key')">正解<span id="key-badge2" class="key-badge" style="display:none">PDF読込済</span></button>
+      <button class="tab" onclick="switchTab('result')">結果</button>
+      <button class="tab" onclick="switchTab('history')">履歴</button>
+    </div>
+    <div class="layout-btns">
+      <button class="layout-btn" onclick="closeQPdf()" title="問題PDFを閉じる" style="font-size:12px;width:auto;padding:0 10px;gap:4px;">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        問題PDFを閉じる
+      </button>
+    </div>
+    <div class="viewer-mode-btns">
+      <button class="mode-btn active" id="btn-scroll" onclick="setViewerMode('scroll')">スクロール</button>
+      <button class="mode-btn" id="btn-page" onclick="setViewerMode('page')">ページ</button>
+      <span id="page-nav" style="display:none;align-items:center;gap:4px;">
+        <button class="page-nav-btn" onclick="changePage(-1)">‹</button>
+        <span id="page-indicator" style="font-size:13px;color:var(--text-secondary);min-width:50px;text-align:center;"></span>
+        <button class="page-nav-btn" onclick="changePage(1)">›</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="dual-body" id="dual-body">
+    <div class="pane pane-pdf" id="pane-pdf">
+      <div id="pdf-canvas-container"></div>
+    </div>
+    <div class="resizer" id="resizer"></div>
+    <div class="pane pane-sheet" id="pane-sheet">
+      <!-- 回答シート -->
+      <div id="dual-answer-area">
+        <div id="answer-sheet-dual" class="sheet-grid"></div>
+        <div class="submit-row" style="margin-top:1rem;">
+          <button id="qpdf-toggle-btn-dual" style="display:none;align-items:center;gap:6px;"></button>
+          <button onclick="clearAnswers()">クリア</button>
+          <button class="btn-primary" onclick="grade()">採点する →</button>
+        </div>
+      </div>
+      <!-- 結果 -->
+      <div id="dual-result-area" style="display:none;">
+        <div id="result-content-dual"></div>
+      </div>
+    </div>
   </div>
 </div>
 
