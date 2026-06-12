@@ -1,351 +1,610 @@
-const pdfjsLib = window['pdfjs-dist/build/pdf'];
-  if (pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  let state = { qcount: 20, choices: 4, labelType: 'num', answers: {}, key: {} };
-
-  function getLabels(n) {
-    if (state.labelType === 'abc')  return ['A','B','C','D','E'].slice(0, n);
-    if (state.labelType === 'kana') return ['ア','イ','ウ','エ','オ'].slice(0, n);
-    return Array.from({ length: n }, (_, i) => i + 1);
+  :root {
+    --bg: #ffffff;
+    --bg-secondary: #f5f5f4;
+    --bg-info: #e6f1fb;
+    --bg-success: #eaf3de;
+    --bg-danger: #fcebeb;
+    --text: #1a1a1a;
+    --text-secondary: #6b6b6b;
+    --text-tertiary: #a0a0a0;
+    --text-info: #185fa5;
+    --text-success: #3b6d11;
+    --text-danger: #a32d2d;
+    --border: rgba(0,0,0,0.12);
+    --border-hover: rgba(0,0,0,0.28);
+    --blue: #178ADD;
+    --green: #1D9E75;
+    --red: #E24B4A;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
   }
 
-  function switchTab(name) {
-    const names = ['setup','answer','key','result','history'];
-    document.querySelectorAll('.tab').forEach((t, i) =>
-      t.classList.toggle('active', names[i] === name));
-    document.querySelectorAll('.section').forEach(s =>
-      s.classList.remove('visible'));
-    document.getElementById('tab-' + name).classList.add('visible');
-    if (name === 'history') renderHistory();
-  }
-
-  function pickChoices(n) { state.choices = n; }
-  function pickLabel(type) { state.labelType = type; }
-
-  function generateSheet() {
-    state.qcount = parseInt(document.getElementById('qcount').value) || 20;
-    state.answers = {};
-    state.key = {};
-    renderSheet('answer-sheet', state.answers, false);
-    renderSheet('answer-key', state.key, false);
-    document.getElementById('key-badge').style.display = 'none';
-    setStatus('', '');
-    switchTab('answer');
-  }
-
-  function renderSheet(containerId, store, showResult, correctStore) {
-    const el = document.getElementById(containerId);
-    if (!el) return;
-    const labels = getLabels(state.choices);
-    el.innerHTML = '';
-    const rows = Math.ceil(state.qcount / 3);
-    el.style.gridTemplateRows = `repeat(${rows}, auto)`;
-    for (let q = 1; q <= state.qcount; q++) {
-      const row = document.createElement('div');
-      row.className = 'q-row';
-      const num = document.createElement('div');
-      num.className = 'q-num';
-      num.textContent = q;
-      const marks = document.createElement('div');
-      marks.className = 'marks';
-      labels.forEach((lbl, i) => {
-        const btn = document.createElement('button');
-        btn.className = 'mark';
-        btn.textContent = lbl;
-        if (store[q] === i) btn.classList.add('filled');
-        if (showResult && correctStore) {
-          if (store[q] === i && correctStore[q] === i) {
-            btn.classList.remove('filled'); btn.classList.add('correct');
-          } else if (store[q] === i && correctStore[q] !== i) {
-            btn.classList.remove('filled'); btn.classList.add('wrong');
-          }
-          if (correctStore[q] === i && store[q] !== i)
-            btn.classList.add('answer-show');
-        }
-        if (!showResult) btn.onclick = () => toggleMark(store, q, i, containerId, correctStore);
-        marks.appendChild(btn);
-      });
-      row.appendChild(num);
-      row.appendChild(marks);
-      el.appendChild(row);
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e;
+      --bg-secondary: #2a2a2a;
+      --bg-info: #0c2440;
+      --bg-success: #0d2810;
+      --bg-danger: #2d0f0f;
+      --text: #f0f0f0;
+      --text-secondary: #a0a0a0;
+      --text-tertiary: #666;
+      --text-info: #85b7eb;
+      --text-success: #97c459;
+      --text-danger: #f09595;
+      --border: rgba(255,255,255,0.1);
+      --border-hover: rgba(255,255,255,0.25);
     }
   }
 
-  function toggleMark(store, q, idx, containerId, correctStore) {
-    if (store[q] === idx) delete store[q]; else store[q] = idx;
-    renderSheet(containerId, store, false, correctStore);
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-secondary);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem 1rem;
   }
 
-  function clearAnswers() {
-    state.answers = {};
-    renderSheet('answer-sheet', state.answers, false);
+  .container {
+    max-width: 780px;
+    margin: 0 auto;
+    background: var(--bg);
+    border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border);
+    padding: 2rem;
   }
 
-  function clearKey() {
-    state.key = {};
-    renderSheet('answer-key', state.key, false);
-    document.getElementById('key-badge').style.display = 'none';
-    setStatus('', '');
+  h1 {
+    font-size: 20px;
+    font-weight: 500;
+    margin-bottom: 1.5rem;
+    color: var(--text);
   }
 
-  function grade() {
-    if (Object.keys(state.key).length === 0) { switchTab('key'); return; }
-    let correct = 0, total = 0;
-    for (let q = 1; q <= state.qcount; q++) {
-      if (state.key[q] !== undefined) {
-        total++;
-        if (state.answers[q] === state.key[q]) correct++;
-      }
-    }
-    const pct = total ? Math.round(correct / total * 100) : 0;
-    saveHistory(correct, total, pct);
-    document.getElementById('result-content').innerHTML = `
-      <div class="score-card">
-        <div class="score-num">${correct} / ${total}</div>
-        <div class="score-sub">正解数 &nbsp;|&nbsp; 正答率 ${pct}%</div>
-      </div>
-      <div class="legend">
-        <span><span class="dot c"></span>正解</span>
-        <span><span class="dot w"></span>不正解</span>
-        <span style="font-size:12px;color:var(--text-tertiary);">（緑枠 = 正解の選択肢）</span>
-      </div>
-      <div id="result-detail" class="sheet-grid"></div>`;
-    renderSheet('result-detail', state.answers, true, state.key);
-    switchTab('result');
+  /* Tab bar */
+  .tab-bar {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    margin-bottom: 1.75rem;
+  }
+  .tab {
+    flex: 1;
+    padding: 8px 0;
+    text-align: center;
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .tab.active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 500;
+    border: 0.5px solid var(--border);
   }
 
-  function setStatus(type, html) {
-    const el = document.getElementById('pdf-status');
-    el.className = 'status-bar' + (type ? ' ' + type : '');
-    el.innerHTML = html;
+  /* Sections */
+  .section { display: none; }
+  .section.visible { display: block; }
+
+  /* Setup */
+  .setup-group {
+    margin-bottom: 1.5rem;
+  }
+  .setup-group-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
   }
 
-  function onDragOver(e) {
-    e.preventDefault();
-    document.getElementById('pdf-drop').classList.add('dragover');
+  /* Number input */
+  .number-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
-  function onDragLeave() {
-    document.getElementById('pdf-drop').classList.remove('dragover');
+  .number-row input[type="number"] {
+    width: 80px;
+    padding: 8px 12px;
+    font-size: 15px;
+    font-family: inherit;
+    border: 0.5px solid var(--border-hover);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
   }
-  function onDrop(e) {
-    e.preventDefault(); onDragLeave();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type === 'application/pdf') processPdf(file);
-    else setStatus('danger', '⚠ PDFファイルを選択してください');
+  .number-row input[type="number"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(23,138,221,0.15);
   }
-  function handlePdfFile(e) {
-    const file = e.target.files[0];
-    if (file) processPdf(file);
-  }
-
-  async function processPdf(file) {
-    setStatus('info', '<span class="spinner"></span>&nbsp;PDFを読み込んでいます...');
-    try {
-      const ab = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
-      let fullText = '';
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        fullText += content.items.map(it => it.str).join(' ') + '\n';
-      }
-
-      const direct = tryDirectParse(fullText);
-      if (Object.keys(direct).length > 0) {
-        autoDetectSettings(direct, fullText);
-        applyExtractedAnswers(direct);
-      } else {
-        setStatus('info', '<span class="spinner"></span>&nbsp;AIが正解を解析中...');
-        await extractAnswersWithAI(fullText);
-      }
-    } catch (err) {
-      setStatus('danger', '⚠ PDFの読み込みに失敗しました: ' + err.message);
-    }
+  .number-row span {
+    font-size: 14px;
+    color: var(--text-secondary);
   }
 
-  function tryDirectParse(text) {
-    const result = {};
-    // 「問N ア/イ/ウ/エ」形式（IPA試験など）
-    const reKana = /問\s*(\d+)\s*([アイウエオ])/g;
-    let m;
-    while ((m = reKana.exec(text)) !== null) result[m[1]] = m[2];
-    if (Object.keys(result).length > 0) return result;
-
-    // 「問N A/B/C/D」形式
-    const reAlpha = /問\s*(\d+)\s*([A-Ea-e])\b/g;
-    while ((m = reAlpha.exec(text)) !== null) result[m[1]] = m[2].toUpperCase();
-    if (Object.keys(result).length > 0) return result;
-
-    // 「問N 1/2/3/4」形式
-    const reNum = /問\s*(\d+)\s*([1-5])(?!\d)/g;
-    while ((m = reNum.exec(text)) !== null) result[m[1]] = m[2];
-    return result;
+  /* Radio-style option tiles */
+  .option-tiles {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .option-tile {
+    position: relative;
+    cursor: pointer;
+  }
+  .option-tile input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .option-tile-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--border);
+    background: var(--bg);
+    font-size: 14px;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .option-tile-inner .check-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-hover);
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .option-tile-inner .check-icon svg {
+    display: none;
+    width: 10px;
+    height: 10px;
+  }
+  .option-tile:hover .option-tile-inner {
+    border-color: var(--blue);
+    color: var(--text);
+  }
+  .option-tile input:checked + .option-tile-inner {
+    border-color: var(--blue);
+    background: var(--bg-info);
+    color: var(--text-info);
+    font-weight: 500;
+    box-shadow: 0 0 0 3px rgba(23,138,221,0.12);
+  }
+  .option-tile input:checked + .option-tile-inner .check-icon {
+    background: var(--blue);
+    border-color: var(--blue);
+  }
+  .option-tile input:checked + .option-tile-inner .check-icon svg {
+    display: block;
   }
 
-  function autoDetectSettings(parsed, text) {
-    const nums = Object.keys(parsed).map(Number);
-    if (nums.length === 0) return;
+  .generate-btn {
+    margin-top: 1.5rem;
+    width: 100%;
+    padding: 11px;
+    font-size: 15px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-hover);
+    background: var(--bg);
+    color: var(--text);
+    transition: background 0.15s;
+  }
+  .generate-btn:hover { background: var(--bg-secondary); }
 
-    const maxQ = Math.max(...nums);
-    if (maxQ > state.qcount) {
-      state.qcount = maxQ;
-      document.getElementById('qcount').value = maxQ;
-    }
+  /* Sheet grid — 縦に流れて列が埋まったら右の列へ */
+  .sheet-grid {
+    display: grid;
+    grid-template-rows: repeat(20, auto);
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 8px;
+  }
+  .q-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+  }
+  .q-num {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    min-width: 26px;
+    font-variant-numeric: tabular-nums;
+  }
+  .marks { display: flex; gap: 4px; }
 
-    const vals = Object.values(parsed);
-    const hasKana = vals.some(v => 'アイウエオ'.includes(v));
-    const hasAlpha = vals.some(v => /^[A-E]$/.test(v));
-    const hasNum  = vals.some(v => /^[1-5]$/.test(v));
-
-    if (hasKana) {
-      state.labelType = 'kana';
-      document.querySelector('input[name="label"][value="kana"]').checked = true;
-      const kanaVals = [...new Set(vals.filter(v => 'アイウエオ'.includes(v)))];
-      state.choices = Math.max(state.choices, Math.max(...kanaVals.map(v => 'アイウエオ'.indexOf(v) + 1)));
-    } else if (hasAlpha) {
-      state.labelType = 'abc';
-      document.querySelector('input[name="label"][value="abc"]').checked = true;
-    } else if (hasNum) {
-      state.labelType = 'num';
-      document.querySelector('input[name="label"][value="num"]').checked = true;
-    }
-
-    const maxChoice = Math.max(state.choices, ...vals.map(v => {
-      const i = 'アイウエオABCDE12345'.indexOf(v);
-      return i >= 0 ? (i % 5) + 1 : 0;
-    }));
-    if (maxChoice >= 3 && maxChoice <= 5) {
-      state.choices = maxChoice;
-      const radio = document.querySelector(`input[name="choices"][value="${maxChoice}"]`);
-      if (radio) radio.checked = true;
-    }
-
-    renderSheet('answer-sheet', state.answers, false);
-    renderSheet('answer-key', state.key, false);
+  .mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 1px solid var(--border-hover);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    font-family: inherit;
+  }
+  .mark:hover {
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+  .mark.filled {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #fff;
+  }
+  .mark.correct {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+  }
+  .mark.wrong {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+  }
+  .mark.answer-show {
+    outline: 2px solid var(--green);
+    outline-offset: 2px;
   }
 
-  async function extractAnswersWithAI(text) {
-    const labels = getLabels(state.choices);
-    const prompt = `以下はPDFから抽出したテキストです。このテキストから各問題の正解を抽出してください。
+  /* Submit row */
+  .submit-row { display: flex; gap: 8px; margin-top: 1.5rem; }
+  .submit-row button {
+    flex: 1;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-hover);
+    background: var(--bg);
+    color: var(--text);
+    transition: background 0.15s;
+  }
+  .submit-row button:hover { background: var(--bg-secondary); }
+  .btn-primary {
+    background: var(--blue) !important;
+    border-color: var(--blue) !important;
+    color: #fff !important;
+  }
+  .btn-primary:hover { opacity: 0.9; }
 
-テキスト:
-${text.slice(0, 4000)}
+  /* PDF drop zone */
+  .pdf-zone {
+    border: 1.5px dashed var(--border-hover);
+    border-radius: var(--radius-md);
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: 1rem;
+  }
+  .pdf-zone:hover { border-color: var(--blue); background: var(--bg-secondary); }
+  .pdf-zone.dragover { border-color: var(--blue); background: var(--bg-info); }
+  .pdf-zone svg { display: block; margin: 0 auto 10px; color: var(--text-tertiary); }
+  .pdf-zone p { font-size: 14px; color: var(--text-secondary); }
+  .pdf-zone .sub { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
 
-各問題の正解を以下のJSON形式で返してください。keyは問題番号（文字列）、valueは正解の選択肢（ア/イ/ウ/エ、A/B/C/D、1/2/3/4 など実際に使われている記号）：
-{"1":"ウ","2":"エ",...}
+  /* Status bar */
+  .status-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    margin-bottom: 1rem;
+  }
+  .status-bar.info    { display: flex; background: var(--bg-info);    color: var(--text-info);    }
+  .status-bar.success { display: flex; background: var(--bg-success); color: var(--text-success); }
+  .status-bar.danger  { display: flex; background: var(--bg-danger);  color: var(--text-danger);  }
 
-見つからない問題は含めなくて構いません。JSONのみ返してください。`;
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 2000,
-          messages: [{ role: 'user', content: prompt }]
-        })
-      });
-      const data = await res.json();
-      const raw = data.content.map(c => c.text || '').join('');
-      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
-      autoDetectSettings(parsed, '');
-      applyExtractedAnswers(parsed);
-    } catch (err) {
-      setStatus('danger', '⚠ AI解析に失敗しました。手動で正解を入力してください。');
-    }
+  /* Result */
+  .score-card {
+    text-align: center;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+  }
+  .score-num { font-size: 48px; font-weight: 500; color: var(--blue); }
+  .score-sub { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+  }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .dot.c { background: var(--green); }
+  .dot.w { background: var(--red); }
+
+  .key-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: var(--bg-success);
+    color: var(--text-success);
+    margin-left: 6px;
   }
 
-  function applyExtractedAnswers(parsed) {
-    const labels = getLabels(state.choices);
-    let count = 0;
-    for (const [qStr, ans] of Object.entries(parsed)) {
-      const q = parseInt(qStr);
-      if (isNaN(q) || q < 1 || q > state.qcount) continue;
-      const idx = labels.findIndex(l => String(l) === String(ans).trim());
-      if (idx >= 0) { state.key[q] = idx; count++; }
-    }
-    renderSheet('answer-key', state.key, false);
-    if (count > 0) {
-      document.getElementById('key-badge').style.display = 'inline';
-      setStatus('success', `✓ ${count}問の正解を読み込みました。確認・修正できます。`);
-    } else {
-      setStatus('danger', '⚠ 正解を読み取れませんでした。手動で入力してください。');
-    }
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .manual-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
   }
 
-  const HISTORY_KEY = 'marksheet-history';
-  const HISTORY_MAX = 50;
-
-  function saveHistory(correct, total, pct) {
-    const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-    list.unshift({
-      id: Date.now(),
-      date: new Date().toLocaleString('ja-JP'),
-      correct,
-      total,
-      pct
-    });
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  /* 履歴 */
+  .history-card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .history-score {
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--blue);
+    min-width: 60px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .history-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .history-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 1px 4px;
+    margin: -1px -4px;
+    display: inline-block;
+    max-width: 100%;
+    transition: background 0.12s;
+  }
+  .history-name:hover { background: var(--bg-secondary); }
+  .history-name::after {
+    content: ' ✎';
+    font-size: 11px;
+    color: var(--text-tertiary);
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .history-name:hover::after { opacity: 1; }
+  .history-name-input {
+    font-size: 14px;
+    font-weight: 500;
+    font-family: inherit;
+    color: var(--text);
+    background: var(--bg-secondary);
+    border: 1px solid var(--blue);
+    border-radius: 4px;
+    padding: 1px 6px;
+    outline: none;
+    width: 100%;
+    box-shadow: 0 0 0 2px rgba(23,138,221,0.15);
+  }
+  .history-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .history-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    font-size: 18px;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    line-height: 1;
+    flex-shrink: 0;
+    transition: color 0.12s, background 0.12s;
+  }
+  .history-delete:hover { color: var(--red); background: var(--bg-danger); }
+  .history-empty {
+    text-align: center;
+    padding: 2rem;
+    font-size: 14px;
+    color: var(--text-secondary);
   }
 
-  function loadHistory() {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+  /* ── 2ペインレイアウト ── */
+  body.dual-mode {
+    padding: 0;
+    background: var(--bg-secondary);
+  }
+  .dual-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--bg);
+    border-bottom: 0.5px solid var(--border);
+    flex-shrink: 0;
+  }
+  .dual-body {
+    display: flex;
+    height: calc(100vh - 52px);
+    overflow: hidden;
+  }
+  .dual-body.tb {
+    flex-direction: column;
+  }
+  .pane {
+    overflow: auto;
+    min-width: 0;
+    min-height: 0;
+  }
+  .pane-pdf {
+    background: #555;
+    flex: 1;
+  }
+  .pane-sheet {
+    background: var(--bg);
+    flex: 1;
+    padding: 1.25rem;
+  }
+  .resizer {
+    flex-shrink: 0;
+    background: var(--border);
+    transition: background 0.15s;
+  }
+  .resizer {
+    width: 4px;
+    cursor: col-resize;
   }
 
-  function deleteHistory(id) {
-    const list = loadHistory().filter(h => h.id !== id);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
-    renderHistory();
+  .resizer:hover, .resizer.dragging {
+    background: var(--blue);
   }
 
-  function clearAllHistory() {
-    if (!confirm('採点履歴をすべて削除しますか？')) return;
-    localStorage.removeItem(HISTORY_KEY);
-    renderHistory();
+  /* PDF canvas */
+  #pdf-canvas-container {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+  #pdf-canvas-container canvas {
+    max-width: 100%;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    border-radius: 2px;
   }
 
-  function renameHistory(id) {
-    const list = loadHistory();
-    const h = list.find(x => x.id === id);
-    if (!h) return;
-    const card = document.querySelector(`[data-id="${id}"]`);
-    const nameEl = card.querySelector('.history-name');
-    const currentName = h.name || '';
-    nameEl.outerHTML = `<input class="history-name-input" data-edit="${id}" value="${currentName}" placeholder="名前を入力…" maxlength="40">`;
-    const input = card.querySelector('.history-name-input');
-    input.focus();
-    input.select();
-    const commit = () => {
-      const newName = input.value.trim();
-      const updated = loadHistory().map(x => x.id === id ? { ...x, name: newName } : x);
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-      renderHistory();
-    };
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-      if (e.key === 'Escape') { renderHistory(); }
-    });
+  /* レイアウト・モードボタン */
+  .layout-btns {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .layout-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-hover);
+    background: var(--bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .layout-btn.active {
+    background: var(--bg-info);
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+  .viewer-mode-btns {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .mode-btn {
+    padding: 4px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-hover);
+    background: var(--bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .mode-btn.active {
+    background: var(--bg-info);
+    border-color: var(--blue);
+    color: var(--blue);
+    font-weight: 500;
+  }
+  .page-nav-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    border: 0.5px solid var(--border-hover);
+    background: var(--bg);
+    color: var(--text-secondary);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+    font-family: inherit;
+  }
+  .page-nav-btn:hover {
+    border-color: var(--blue);
+    color: var(--blue);
   }
 
-  function renderHistory() {
-    const el = document.getElementById('history-list');
-    const list = loadHistory();
-    if (list.length === 0) {
-      el.innerHTML = '<p class="history-empty">まだ採点履歴がありません</p>';
-      return;
-    }
-    el.innerHTML = list.map(h => `
-      <div class="history-card" data-id="${h.id}">
-        <div class="history-score">${h.correct}<span style="font-size:14px;color:var(--text-secondary);font-weight:400;"> / ${h.total}</span></div>
-        <div class="history-meta">
-          <span class="history-name" onclick="renameHistory(${h.id})">${h.name || '名前なし'}</span>
-          <div class="history-sub">正答率 ${h.pct}% &nbsp;·&nbsp; ${h.date}</div>
-        </div>
-        <button class="history-delete" onclick="deleteHistory(${h.id})" title="削除">×</button>
-      </div>
-    `).join('');
+  /* 設定タブの小さいPDFドロップゾーン */
+  .pdf-zone.small {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
   }
-
-  generateSheet();
+  .pdf-zone.small svg { flex-shrink: 0; }
+  .pdf-zone.small span { font-size: 13px; }
